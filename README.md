@@ -12,7 +12,7 @@ pip install discord
 
 - Download Discord messages using [Discord History Tracker](https://dht.chylex.com/).
 
-- Run with default settings.
+- Run once with default settings.
 
 ```
 python quothbot.py dht.txt
