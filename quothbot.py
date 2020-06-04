@@ -66,6 +66,7 @@ def main(json_file, config_file=None):
             config = json.load(f)
     else:
         config = {
+            'token': '',
             'bot signs': ['!', '-', ';;', '>>'],
             'user whitelist': [],
             'user blacklist': [],
@@ -74,6 +75,12 @@ def main(json_file, config_file=None):
         }
         with open(config_file, 'w') as f:
             json.dump(config, f, indent=2)
+
+    # check for auth token
+    if not config['token']:
+        print('Error: Token not found.')
+        print('Copy bot token into "{}"'.format(config_file))
+        return
 
     # load data
     print('\nLoading {}...'.format(json_file))
@@ -103,12 +110,8 @@ def main(json_file, config_file=None):
             message = choice(messages[user])
             await channel.send(embed=embed(channel, user, message))
 
-    # read auth token
-    with open('token.txt') as f:
-        token = f.readline()[:-1]
-
     # start bot
-    client.run(token)
+    client.run(config['token'])
 
 if __name__ == '__main__':
     import argparse

@@ -1,6 +1,5 @@
 
 config.txt
-token.txt
 *.txt
 
 # Byte-compiled / optimized / DLL files
