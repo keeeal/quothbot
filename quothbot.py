@@ -1,78 +1,42 @@
 
-import os, asyncio, json, discord
+import os, asyncio, json, pickle
+from datetime import datetime
 from random import choice
 
-def load_messages(json_file,
-        bots=[], whitelist=[], blacklist=[],
-        urls=False, tags=False):
+import discord
+data = {}
 
-    with open(json_file) as f:
-        data = json.load(f)
+# print, but with a timestamp
+def print_log(*args, **kwargs):
+    print('[{}]'.format(datetime.now()), *args, **kwargs)
 
-    messages = {}
-    usernames = {k:v['name'] for k, v in data['meta']['users'].items()}
-    idx = data['meta']['userindex']
+# return a dictionary of guild > messages
+async def get_data(client):
+    print_log('Getting data')
+    data = {}
 
-    for channel_id, channel_data in data['data'].items():
-        for message_id, message_data in channel_data.items():
+    for guild in client.guilds:
+        print_log(guild.name)
+        data[guild] = []
 
-            # get username
-            u = usernames[idx[message_data['u']]]
-            if len(whitelist) and u not in whitelist:
-                continue
-            if u in blacklist:
-                continue
+        for channel in guild.text_channels:
+            print_log(guild.name, '>', channel.name)
+            messages = await channel.history(limit=None).flatten()
+            print_log(guild.name, '>', channel.name, '>',
+                '{} messages found.'.format(len(messages)))
+            data[guild] += messages
 
-            # get message
-            if 'm' in message_data:
-                m = message_data['m']
+    print_log('Ready to quoth')
+    return data
 
-                # filter messages
-                for sign in bots:
-                    if m.startswith(sign):
-                        m = ''
-                if not urls:
-                    if 'http' in m or 'www.' in m:
-                        m = ''
-                if not tags:
-                    if m.startswith('<@') and m.endswith('>'):
-                        m = ''
-
-                if not m: continue
-                if u not in messages: messages[u] = []
-                messages[u].append(m)
-
-    return messages
-
-def embed(channel, user, message):
-    for member in channel.guild.members:
-        avatar = member.default_avatar_url
-        if member.name == user:
-            if member.nick: user = member.nick
-            avatar = member.avatar_url
-            break
-
-    embed = discord.Embed(description=message)
-    embed.set_author(name=user, icon_url=avatar)
-    return embed
-
-def main(json_file, config_file=None):
+def main(config_file):
 
     # load config file or create it
-    if not config_file:
-        config_file = 'config.txt'
     if os.path.isfile(config_file):
         with open(config_file) as f:
             config = json.load(f)
     else:
-        config = {
-            'token': '',
-            'bot signs': ['!', '-', ';;', '>>'],
-            'user whitelist': [],
-            'user blacklist': [],
-            'allow urls': False,
-            'allow lone tags': False,
-        }
+        config = {'token': ''}
         with open(config_file, 'w') as f:
             json.dump(config, f, indent=2)
 
@@ -82,33 +46,51 @@ def main(json_file, config_file=None):
         print('Copy bot token into "{}"'.format(config_file))
         return
 
-    # load data
-    print('\nLoading {}...'.format(json_file))
-    messages = load_messages(json_file,
-        bots=config['bot signs'],
-        whitelist=config['user whitelist'],
-        blacklist=config['user blacklist'],
-        urls=config['allow urls'],
-        tags=config['allow lone tags'],
-    )
-    n_messages = [(len(m), u) for u, m in messages.items()]
-    for n, u in sorted(n_messages, reverse=True):
-        print('Loaded {}: {} messages'.format(u, n))
-
     # create client
     client = discord.Client()
 
     @client.event
     async def on_ready():
-        print('Logged in as {}'.format(client.user.name))
+        global data
+        print_log('Logged in as', client.user.name)
+
+        # get data
+        data = await get_data(client)
 
     @client.event
     async def on_reaction_add(reaction, user):
         channel = reaction.message.channel
         if reaction.emoji == '🐦':
-            user = choice(list(messages.keys()))
-            message = choice(messages[user])
-            await channel.send(embed=embed(channel, user, message))
+
+            # report no data
+            if not data:
+                msg = "I can't quoth right now, I'm reading messages."
+                embed = discord.Embed(description=msg)
+                await channel.send(embed=embed)
+                return
+
+            # choose a random message
+            message = choice(data[channel.guild])
+
+            # get author name and avatar
+            name = message.author.name
+            icon_url = message.author.default_avatar_url
+            if isinstance(message.author, discord.Member):
+                icon_url = message.author.avatar_url
+                if message.author.nick:
+                    name = message.author.nick
+
+            # embed with author and timestamp
+            embed = discord.Embed(
+                description=message.content, timestamp=message.created_at)
+            embed.set_author(name=name, icon_url=icon_url)
+
+            # if attachments, choose a random one
+            if message.attachments:
+                embed.set_image(url=choice(message.attachments).url)
+
+            # send to reaction channel
+            await channel.send(embed=embed)
 
     # start bot
     client.run(config['token'])
@@ -116,6 +98,5 @@ def main(json_file, config_file=None):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('json_file')
-    parser.add_argument('--config_file', '-c')
+    parser.add_argument('--config-file', '-c', default='config.json')
     main(**vars(parser.parse_args()))
