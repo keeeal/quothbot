@@ -1,33 +1,28 @@
 
-import os, asyncio, json, pickle
-from datetime import datetime
+import os, asyncio, json
+from itertools import chain
+from datetime import date
 from random import choice
 
 import discord
-data = {}
 
-# print, but with a timestamp
-def print_log(*args, **kwargs):
-    print('[{}]'.format(datetime.now()), *args, **kwargs)
+data = None
 
-# return a dictionary of guild > messages
+
+# return a list of messages
+async def get_messages(guild):
+    return list(chain(*await asyncio.gather(*map(
+        lambda c: c.history(limit=None).flatten(),
+        guild.text_channels
+    ))))
+
+
+# return a dictionary of guild: messages
 async def get_data(client):
-    print_log('Getting data')
-    data = {}
+    return dict(zip(client.guilds,
+        await asyncio.gather(*map(get_messages, client.guilds))
+    ))
 
-    for guild in client.guilds:
-        print_log(guild.name)
-        data[guild] = []
-
-        for channel in guild.text_channels:
-            print_log(guild.name, '>', channel.name)
-            messages = await channel.history(limit=None).flatten()
-            print_log(guild.name, '>', channel.name, '>',
-                '{} messages found.'.format(len(messages)))
-            data[guild] += messages
-
-    print_log('Ready to quoth')
-    return data
 
 def main(config_file):
 
@@ -35,8 +30,14 @@ def main(config_file):
     if os.path.isfile(config_file):
         with open(config_file) as f:
             config = json.load(f)
+        config['birthdays'] = {k: date.fromisoformat(v)
+            for k, v in config['birthdays'].items()}
     else:
-        config = {'token': ''}
+        config = {
+            'token': '',
+            'banlist': ['QuothBot'],
+            'birthdays': {},
+        }
         with open(config_file, 'w') as f:
             json.dump(config, f, indent=2)
 
@@ -49,13 +50,15 @@ def main(config_file):
     # create client
     client = discord.Client()
 
+
     @client.event
     async def on_ready():
         global data
-        print_log('Logged in as', client.user.name)
 
-        # get data
+        print('Getting data...')
         data = await get_data(client)
+        print('Ready to quoth')
+
 
     @client.event
     async def on_reaction_add(reaction, user):
@@ -69,11 +72,31 @@ def main(config_file):
                 await channel.send(embed=embed)
                 return
 
-            # choose a random message
-            message = choice(data[channel.guild])
+            # choose a message
+            # TODO: change data structure to make this more efficient
+            for sample in range(1000):
+                message = choice(data[channel.guild])
+                name = message.author.name
 
-            # get author name and avatar
-            name = message.author.name
+                # respect banlist
+                if name in config['banlist']:
+                    continue
+
+                # check for birthdays
+                for key, value in config['birthdays'].items():
+                    value = date(date.today().year, value.month, value.day)
+                    if value == date.today():
+                        if name != key:
+                            continue
+
+                break
+            else:
+                msg = "I couldn't find a message."
+                embed = discord.Embed(description=msg)
+                await channel.send(embed=embed)
+                return
+
+            # get author nickname and avatar
             icon_url = message.author.default_avatar_url
             if isinstance(message.author, discord.Member):
                 icon_url = message.author.avatar_url
@@ -85,15 +108,17 @@ def main(config_file):
                 description=message.content, timestamp=message.created_at)
             embed.set_author(name=name, icon_url=icon_url)
 
-            # if attachments, choose a random one
+            # if attachments then choose one
             if message.attachments:
                 embed.set_image(url=choice(message.attachments).url)
 
             # send to reaction channel
             await channel.send(embed=embed)
 
+
     # start bot
     client.run(config['token'])
+
 
 if __name__ == '__main__':
     import argparse
